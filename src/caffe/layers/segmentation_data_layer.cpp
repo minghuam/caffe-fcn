@@ -30,6 +30,7 @@ void SegmentationDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bo
   const string source = data_param.source();
   const bool shuffle = data_param.shuffle();
   const int batch_size = data_param.batch_size();
+  const bool has_manipulation_data = data_param.has_manipulation_data();
 
   for(int i = 0; i < data_param.mean_value_size(); ++i){
     mean_values_.push_back(data_param.mean_value(i));
@@ -37,12 +38,27 @@ void SegmentationDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bo
 
   string image_path;
   string gt_image_path;
+  float mp_x;
+  float mp_y;
 
   LOG(INFO) << "Opening file " << source;
   std::ifstream in_file(source.c_str());
-  while(in_file >> image_path >> gt_image_path){
-    std::pair<string, string> pair = std::make_pair(image_path, gt_image_path);
-    image_pairs_.push_back(pair);
+  if(has_manipulation_data){
+    while(in_file >> image_path >> gt_image_path >> mp_x >> mp_y){
+      ImagePair pair;
+      pair.image = image_path;
+      pair.gt_image = gt_image_path;
+      pair.mp_x = mp_x;
+      pair.mp_y = mp_y;
+      image_pairs_.push_back(pair);
+    }
+  }else{
+    while(in_file >> image_path >> gt_image_path){
+      ImagePair pair;
+      pair.image = image_path;
+      pair.gt_image = gt_image_path;
+      image_pairs_.push_back(pair);
+    }
   }
 
   LOG(INFO) << "Total number of image pairs: " << image_pairs_.size();
@@ -55,7 +71,7 @@ void SegmentationDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bo
     ShuffleImages();
   }
 
-  cv::Mat I = cv::imread(image_pairs_[0].first);
+  cv::Mat I = cv::imread(image_pairs_[0].image);
   int height = I.rows;
   int width = I.cols;
   const int crop_size = this->layer_param_.transform_param().crop_size();
@@ -74,6 +90,13 @@ void SegmentationDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bo
   LOG(INFO) << "output data size: " << top[0]->num() << ","
       << top[0]->channels() << "," << top[0]->height() << ","
       << top[0]->width();
+
+  if(has_manipulation_data){
+      int mp_shape_array[4] = {batch_size, 2, 1, 1};
+      vector<int> label_shape(&mp_shape_array[0], &mp_shape_array[0] + 4);
+      this->prefetch_label_.Reshape(label_shape);
+      top[1]->Reshape(label_shape);
+  }
 }
 
 template <typename Dtype>
@@ -91,7 +114,7 @@ void SegmentationDataLayer<Dtype>::InternalThreadEntry() {
   const int batch_size = data_param.batch_size();
   const bool shuffle = data_param.shuffle();
 
-  cv::Mat I = cv::imread(image_pairs_[image_pair_id_].first);
+  cv::Mat I = cv::imread(image_pairs_[image_pair_id_].image);
   int input_height = I.rows;
   int input_width = I.cols;
   int height = I.rows;
@@ -115,7 +138,7 @@ void SegmentationDataLayer<Dtype>::InternalThreadEntry() {
     datum.clear_data();
     datum.clear_float_data();
 
-    cv::Mat I_image = cv::imread(image_pairs_[image_pair_id_].first);
+    cv::Mat I_image = cv::imread(image_pairs_[image_pair_id_].image);
     for(int c = 0; c < I.channels(); ++c){
       for(int h = 0; h < I_image.rows; ++h){
         for(int w = 0; w < I_image.cols; ++w){
@@ -124,7 +147,7 @@ void SegmentationDataLayer<Dtype>::InternalThreadEntry() {
       }
     }
 
-    cv::Mat I_label = cv::imread(image_pairs_[image_pair_id_].second, CV_LOAD_IMAGE_GRAYSCALE);
+    cv::Mat I_label = cv::imread(image_pairs_[image_pair_id_].gt_image, CV_LOAD_IMAGE_GRAYSCALE);
     for(int h = 0; h < I_label.rows; ++h){
         for(int w = 0; w < I_label.cols; ++w){
             float label = I_label.at<uchar>(h, w) > 0 ? 1 : 0;

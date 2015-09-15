@@ -334,14 +334,29 @@ class SegmentationDataLayer : public BasePrefetchingDataLayer<Dtype> {
 
   virtual inline const char* type() const { return "SegmentationData"; }
   virtual inline int ExactNumBottomBlobs() const { return 0; }
-  virtual inline int ExactNumTopBlobs() const { return 1; }
+  //virtual inline int ExactNumTopBlobs() const { return 1; }
+  virtual inline int ExactNumTopBlobs() const {
+    if(this->layer_param_.segmentation_data_param().has_manipulation_data()){
+      return 2;
+    }else{
+      return 1;
+    }
+  }
  protected:
   virtual void InternalThreadEntry();
     virtual void ShuffleImages();
 
   shared_ptr<Caffe::RNG> prefetch_rng_;
   vector<Dtype> mean_values_;
-  vector<std::pair<std::string, std::string> > image_pairs_;
+
+  struct ImagePair{
+      std::string image;
+      std::string gt_image;
+      float mp_x;
+      float mp_y;
+  };
+
+  vector<ImagePair> image_pairs_;
   int image_pair_id_;
 };
 

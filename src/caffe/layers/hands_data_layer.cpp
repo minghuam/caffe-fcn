@@ -18,19 +18,18 @@
 namespace caffe {
 
 template <typename Dtype>
-SegmentationDataLayer<Dtype>::~SegmentationDataLayer<Dtype>() {
+HandsDataLayer<Dtype>::~HandsDataLayer<Dtype>() {
   this->JoinPrefetchThread();
 }
 
 template <typename Dtype>
-void SegmentationDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
+void HandsDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
 
-  SegmentationDataParameter data_param = this->layer_param_.segmentation_data_param();
+  HandsDataParameter data_param = this->layer_param_.hands_data_param();
   const string source = data_param.source();
   const bool shuffle = data_param.shuffle();
   const int batch_size = data_param.batch_size();
-  const bool has_manipulation_data = data_param.has_manipulation_data();
 
   for(int i = 0; i < data_param.mean_value_size(); ++i){
     mean_values_.push_back(data_param.mean_value(i));
@@ -38,33 +37,17 @@ void SegmentationDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bo
 
   string image_path;
   string gt_image_path;
-  float mp_x;
-  float mp_y;
+  string hand_image_path;
 
   LOG(INFO) << "Opening file " << source;
   std::ifstream in_file(source.c_str());
-  if(has_manipulation_data){
-    while(in_file >> image_path >> gt_image_path >> mp_x >> mp_y){
-      ImagePair pair;
-      pair.image = image_path;
-      pair.gt_image = gt_image_path;
-      pair.mp_x = mp_x;
-      pair.mp_y = mp_y;
-      image_pairs_.push_back(pair);
-    }
-  }else{
-    std::string line;
-    while(std::getline(in_file, line)){
-      ImagePair pair;
-      int pos1 = line.find(' ');
-      pair.image = line.substr(0, pos1);
-      int pos2 = line.find(' ', pos1 + 1);
-      pair.gt_image = line.substr(pos1 + 1, pos2 - pos1 - 1);
-      image_pairs_.push_back(pair);
-      LOG(INFO) << pair.image;
-      LOG(INFO) << pair.gt_image;
-    }
- }
+  while(in_file >> image_path >> gt_image_path >> hand_image_path){
+    ImagePair pair;
+    pair.image = image_path;
+    pair.gt_image = gt_image_path;
+    pair.hand_image = hand_image_path;
+    image_pairs_.push_back(pair);
+  }
 
   LOG(INFO) << "Total number of image pairs: " << image_pairs_.size();
 
@@ -88,29 +71,19 @@ void SegmentationDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bo
   }
   LOG(INFO) << height << "," << width;
 
-  this->transformed_data_.Reshape(1, 4, height, width);
+  this->transformed_data_.Reshape(1, 5, height, width);
 
-  int image_shape_array[4] = {batch_size, 4, height, width};
+  int image_shape_array[4] = {batch_size, 5, height, width};
   vector<int> top_shape(&image_shape_array[0], &image_shape_array[0] + 4);
   this->prefetch_data_.Reshape(top_shape);
   top[0]->Reshape(top_shape);
   LOG(INFO) << "output data size: " << top[0]->num() << ","
       << top[0]->channels() << "," << top[0]->height() << ","
       << top[0]->width();
-
-  if(has_manipulation_data){
-      int mp_shape_array[4] = {batch_size, 2, 1, 1};
-      vector<int> label_shape(&mp_shape_array[0], &mp_shape_array[0] + 4);
-      this->prefetch_label_.Reshape(label_shape);
-      top[1]->Reshape(label_shape);
-      LOG(INFO) << "label size: " << top[1]->num() << ","
-        << top[1]->channels() << "," << top[1]->height() << ","
-        << top[1]->width();
-  }
 }
 
 template <typename Dtype>
-void SegmentationDataLayer<Dtype>::ShuffleImages() {
+void HandsDataLayer<Dtype>::ShuffleImages() {
     LOG(INFO) << "Shuffle images";
     caffe::rng_t* prefetch_rng =
       static_cast<caffe::rng_t*>(prefetch_rng_->generator());
@@ -118,21 +91,20 @@ void SegmentationDataLayer<Dtype>::ShuffleImages() {
 }
 
 template <typename Dtype>
-bool SegmentationDataLayer<Dtype>::RandBool(){
+bool HandsDataLayer<Dtype>::RandBool(){
   caffe::rng_t* rng =
     static_cast<caffe::rng_t*>(bool_rng_->generator());
   return ((*rng)() % 2);
 }
 
 template <typename Dtype>
-void SegmentationDataLayer<Dtype>::InternalThreadEntry() {
+void HandsDataLayer<Dtype>::InternalThreadEntry() {
 
-  SegmentationDataParameter data_param = this->layer_param_.segmentation_data_param();
+  HandsDataParameter data_param = this->layer_param_.hands_data_param();
   const int batch_size = data_param.batch_size();
   const bool shuffle = data_param.shuffle();
-  const bool has_manipulation_data = data_param.has_manipulation_data();
-  const bool mirror = data_param.mirror();
   const int show_level = data_param.show_level();
+  const bool mirror = data_param.mirror();
 
   cv::Mat I = cv::imread(image_pairs_[image_pair_id_].image);
   int input_height = I.rows;
@@ -145,32 +117,21 @@ void SegmentationDataLayer<Dtype>::InternalThreadEntry() {
       width = crop_size;
   }
 
-  this->transformed_data_.Reshape(1, 4, height, width);
+  this->transformed_data_.Reshape(1, 5, height, width);
 
   Dtype* prefetch_data = this->prefetch_data_.mutable_cpu_data();
 
   Datum datum;
-  datum.set_channels(4);
+  datum.set_channels(5);
   datum.set_height(input_height);
   datum.set_width(input_width);
 
-  for(int item_id = 0; item_id < batch_size; item_id++){
-    
-    bool mirror_image = false;
-    if(mirror){
-      mirror_image = RandBool();
-    }
+  bool do_mirror = false;
+  if(mirror){
+    do_mirror = RandBool();
+  }
 
-    if(has_manipulation_data){
-      Dtype* prefetch_label = this->prefetch_label_.mutable_cpu_data();
-      if(!mirror_image){
-        prefetch_label[2*item_id + 0] = image_pairs_[image_pair_id_].mp_x; 
-      }else{
-        prefetch_label[2*item_id + 0] = 1.0f - image_pairs_[image_pair_id_].mp_x;
-      }
-      prefetch_label[2*item_id + 1] = image_pairs_[image_pair_id_].mp_y;
-    }
-    
+  for(int item_id = 0; item_id < batch_size; item_id++){
     datum.clear_data();
     datum.clear_float_data();
 
@@ -178,39 +139,57 @@ void SegmentationDataLayer<Dtype>::InternalThreadEntry() {
     for(int c = 0; c < I.channels(); ++c){
       for(int h = 0; h < I_image.rows; ++h){
         for(int w = 0; w < I_image.cols; ++w){
-          if(!mirror_image){
-            datum.add_float_data((float)I_image.at<cv::Vec3b>(h,w)[c] - mean_values_[c]);
-          }else{
-            datum.add_float_data((float)I_image.at<cv::Vec3b>(h, I_image.cols - w - 1)[c] - mean_values_[c]);
+          int x = w;
+          int y = h;
+          if(do_mirror){
+            x = I_image.rows - 1 - x;
           }
+          datum.add_float_data((float)I_image.at<cv::Vec3b>(y,x)[c] - mean_values_[c]);
         }
       }
     }
 
     cv::Mat I_label = cv::imread(image_pairs_[image_pair_id_].gt_image, CV_LOAD_IMAGE_GRAYSCALE);
-    for(int h = 0; h < I_label.rows; ++h){
-        for(int w = 0; w < I_label.cols; ++w){
-            if(!mirror_image){
-              float label = I_label.at<uchar>(h, w) > 0 ? 1 : 0;
-              datum.add_float_data(label);
-            }else{
-              float label = I_label.at<uchar>(h, I_label.cols - w - 1) > 0 ? 1 : 0;
-              datum.add_float_data(label);
-            }
+    //for(int h = 0; h < I_label.rows; ++h){
+    //    for(int w = 0; w < I_label.cols; ++w){
+    //      float label = I_label.at<uchar>(h, w) > 0 ? 1 : 0;
+    //      datum.add_float_data(label);
+    //    }
+    //}
+
+    cv::Mat I_hand = cv::imread(image_pairs_[image_pair_id_].hand_image);
+    vector<int> chs;
+    if(do_mirror){
+      chs.push_back(1);
+      chs.push_back(0);
+    }else{
+      chs.push_back(0);
+      chs.push_back(1);
+    }
+    for(int i = 0; i < (int)chs.size(); ++i){
+      int c = chs[i];
+      for(int h = 0; h < I_hand.rows; ++h){
+        for(int w = 0; w < I_hand.cols; ++w){
+          int x = w;
+          int y = h;
+          if(do_mirror){
+            x = I_hand.cols - 1 - x;
+          }
+          float label = I_hand.at<cv::Vec3b>(y, x)[c] > 0 ? 1 : 0;
+          datum.add_float_data(label);
         }
+      }
     }
 
     if(show_level == 1){
-      if(has_manipulation_data){
-        cv::Mat I_image_s = I_image.clone();
-        int x = (int)(image_pairs_[image_pair_id_].mp_x * I_image.cols);
-        int y = (int)(image_pairs_[image_pair_id_].mp_y * I_image.rows);
-        cv::circle(I_image_s, cv::Point(x,y), 5, cv::Scalar(0,0,255), -1);
-        cv::imshow("I", I_image_s);
-      }else{
-        cv::imshow("I", I_image);
+      for(int h = 0; h < I_hand.rows; ++h){
+        for(int w = 0; w < I_hand.cols; ++w){
+          I_hand.at<cv::Vec3b>(h,w)[2] = I_label.at<uchar>(h,w);
+        }
       }
-      cv::imshow("I_label", I_label);
+      
+      cv::addWeighted(I_image, 0.85, I_hand, 0.5, 0, I_image);
+      cv::imshow("I", I_image);
       cv::waitKey(30);
     }
 
@@ -228,8 +207,8 @@ void SegmentationDataLayer<Dtype>::InternalThreadEntry() {
   }
 }
 
-INSTANTIATE_CLASS(SegmentationDataLayer);
-REGISTER_LAYER_CLASS(SegmentationData);
+INSTANTIATE_CLASS(HandsDataLayer);
+REGISTER_LAYER_CLASS(HandsData);
 
 }  // namespace caffe
 

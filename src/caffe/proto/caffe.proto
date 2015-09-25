@@ -335,6 +335,7 @@ message LayerParameter {
   optional WindowDataParameter window_data_param = 129;
   optional SegmentationDataParameter segmentation_data_param = 140;
   optional HandsDataParameter hands_data_param = 141;
+  optional ObjectDataParameter object_data_param = 142;
 }
 
 // Message that stores parameters used to apply transformation
@@ -587,6 +588,16 @@ message HandsDataParameter{
   optional uint32 show_level = 5 [default = 0];
   optional bool mirror = 6 [default = false];
 }
+
+message ObjectDataParameter{
+  optional string source = 1;
+  optional bool shuffle = 2 [default = true];
+  repeated float mean_value = 3;
+  optional uint32 batch_size = 4 [default = 1];
+  optional uint32 show_level = 5 [default = 0];
+  optional bool mirror = 6 [default = false];
+}
+
 
 // Message that stores parameters InfogainLossLayer
 message InfogainLossParameter {

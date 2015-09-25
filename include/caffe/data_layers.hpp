@@ -394,6 +394,38 @@ class HandsDataLayer : public BasePrefetchingDataLayer<Dtype> {
   int image_pair_id_;
 };
 
+template <typename Dtype>
+class ObjectDataLayer : public BasePrefetchingDataLayer<Dtype> {
+ public:
+  explicit ObjectDataLayer(const LayerParameter& param)
+      : BasePrefetchingDataLayer<Dtype>(param) {}
+  virtual ~ObjectDataLayer();
+  virtual void DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
+      const vector<Blob<Dtype>*>& top);
+
+  virtual inline const char* type() const { return "ObjectData"; }
+  virtual inline int ExactNumBottomBlobs() const { return 0; }
+  virtual inline int ExactNumTopBlobs() const { return 1; }
+  
+ protected:
+  virtual void InternalThreadEntry();
+  virtual void ShuffleImages();
+  bool RandBool();
+
+  shared_ptr<Caffe::RNG> bool_rng_;
+  shared_ptr<Caffe::RNG> prefetch_rng_;
+  vector<Dtype> mean_values_;
+
+  struct ImagePair{
+      std::string image;
+      std::string gt_image;
+      std::string object_image;
+  };
+
+  vector<ImagePair> image_pairs_;
+  int image_pair_id_;
+};
+
 
 }  // namespace caffe
 
